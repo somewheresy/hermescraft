@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>Eddie Platinum Dashboard</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main>
+      <header class="masthead">
+        <div>
+          <p class="eyebrow">Eddie Platinum / S2</p>
+          <h1>Eddie Platinum Dashboard</h1>
+          <p class="subtitle">Social, Minecraft, and Actual inference telemetry.</p>
+        </div>
+        <div class="live-block">
+          <span id="live-indicator" class="live-indicator" aria-hidden="true"></span>
+          <span id="refresh-status">Connecting…</span>
+        </div>
+      </header>
+
+      <section class="summary" aria-label="Fleet summary">
+        <article class="metric metric-primary">
+          <span>Tracked inference tokens</span>
+          <strong id="total-tokens">—</strong>
+          <small id="usage-coverage">No requests yet</small>
+        </article>
+        <article class="metric">
+          <span>Prompt</span>
+          <strong id="prompt-tokens">—</strong>
+          <small>uncached + cache read/write</small>
+        </article>
+        <article class="metric">
+          <span>Completion</span>
+          <strong id="output-tokens">—</strong>
+          <small id="reasoning-tokens">0 reasoning</small>
+        </article>
+        <article class="metric">
+          <span>Cache read</span>
+          <strong id="cache-read-tokens">—</strong>
+          <small id="cache-write-tokens">0 cache write</small>
+        </article>
+        <article class="metric">
+          <span>API requests</span>
+          <strong id="requests">—</strong>
+          <small id="average-duration">0 ms average</small>
+        </article>
+        <article class="metric">
+          <span>Completed turns</span>
+          <strong id="turns">—</strong>
+          <small id="errors">0 request errors</small>
+        </article>
+      </section>
+
+      <section class="endpoint-section" aria-labelledby="endpoint-health-heading">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">api.actual.inc</p>
+            <h2 id="endpoint-health-heading">Inference endpoint health</h2>
+          </div>
+          <div class="endpoint-summary">
+            <span id="endpoint-indicator" class="live-indicator" aria-hidden="true"></span>
+            <span id="endpoint-counts">No endpoint sweep recorded yet</span>
+            <span id="endpoint-failure-breakdown">No failures recorded</span>
+            <span id="endpoint-freshness">Scheduled every 15 minutes</span>
+          </div>
+        </div>
+        <div class="table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th>Endpoint</th>
+                <th>Mode</th>
+                <th>Status</th>
+                <th class="number">Successes</th>
+                <th class="number">Failures</th>
+                <th class="number">Success rate</th>
+                <th class="number">Last latency</th>
+                <th class="number">HTTP</th>
+                <th>Failure / validation</th>
+                <th class="number">Tokens</th>
+                <th>Last check</th>
+              </tr>
+            </thead>
+            <tbody id="endpoint-rows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="spark-section" aria-labelledby="spark-memory-heading">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">S2 infrastructure</p>
+            <h2 id="spark-memory-heading">Spark memory</h2>
+          </div>
+          <span class="section-note">Unified memory · 10s sampling</span>
+        </div>
+        <div id="spark-cards" class="spark-grid" aria-live="polite">
+          <p class="spark-empty">Waiting for Spark memory telemetry…</p>
+        </div>
+      </section>
+
+      <section class="fleet-section">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Live state</p>
+            <h2>Agents</h2>
+            <span class="section-note">Minecraft + Social · tracked since observer enablement</span>
+          </div>
+          <div class="server-state">
+            <span id="server-indicator" class="live-indicator" aria-hidden="true"></span>
+            <span id="server-status">Minecraft server: checking…</span>
+            <span id="fleet-counts" class="fleet-counts">—</span>
+          </div>
+        </div>
+
+        <div class="table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th>Agent</th>
+                <th>State</th>
+                <th>Brain</th>
+                <th>Body</th>
+                <th>Minecraft</th>
+                <th>Vitals / position</th>
+                <th>Task</th>
+                <th>Model</th>
+                <th class="number">Requests</th>
+                <th class="number">Tokens</th>
+                <th>Last activity</th>
+              </tr>
+            </thead>
+            <tbody id="agent-rows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <footer>
+        <span>Read-only · bound to 127.0.0.1</span>
+        <span id="telemetry-health"></span>
+      </footer>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
