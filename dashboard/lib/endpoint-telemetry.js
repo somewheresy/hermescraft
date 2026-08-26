@@ -41,6 +41,7 @@ const ALLOWED_FAILURE_REASON_CODES = new Set([
 const LEGACY_TIMEOUT_MIN_MS = 120_000;
 const LEGACY_TIMEOUT_MAX_MS = 125_000;
 const READ_CHUNK_BYTES = 256 * 1024;
+export const ENDPOINT_WINDOW_MS = 24 * 60 * 60 * 1_000;
 
 function count(value) {
   return Number.isSafeInteger(value) && value >= 0 ? value : null;
@@ -85,6 +86,24 @@ function normalizeFailureKind({
   return FAILURE_KIND_SET.has(rawFailureKind) ? rawFailureKind : 'request_failed';
 }
 
+function isReasoningVarianceFalsePositive({
+  success,
+  rawFailureKind,
+  rawFailureReasonCode,
+  httpStatus,
+  schemaOk,
+  smokeExpectation,
+  parity,
+}) {
+  return !success
+    && ['parity_failure', 'parity_mismatch'].includes(rawFailureKind)
+    && rawFailureReasonCode === null
+    && httpStatus === 200
+    && schemaOk === true
+    && smokeExpectation === 'match'
+    && parity === 'mismatch';
+}
+
 export function parseEndpointTelemetryLine(line) {
   let value;
   try {
@@ -110,15 +129,29 @@ export function parseEndpointTelemetryLine(line) {
   if (httpStatus !== null && (httpStatus < 100 || httpStatus > 599)) return null;
   if (value.schema_ok !== null && value.schema_ok !== undefined && typeof value.schema_ok !== 'boolean') return null;
 
+  const rawSuccess = value.success;
   const rawFailureKind = safeText(value.failure_kind, 64);
   const candidateReasonCode = safeText(value.failure_reason_code, 64);
-  const failureReasonCode = !value.success && ALLOWED_FAILURE_REASON_CODES.has(candidateReasonCode)
+  const latencyMs = count(value.latency_ms);
+  const rawParity = safeText(value.parity, 64);
+  const schemaOk = typeof value.schema_ok === 'boolean' ? value.schema_ok : null;
+  const smokeExpectation = safeText(value.smoke_expectation, 64);
+  const projectedReasoningVariance = isReasoningVarianceFalsePositive({
+    success: rawSuccess,
+    rawFailureKind,
+    rawFailureReasonCode: candidateReasonCode,
+    httpStatus,
+    schemaOk,
+    smokeExpectation,
+    parity: rawParity,
+  });
+  const success = rawSuccess || projectedReasoningVariance;
+  const failureReasonCode = !success && ALLOWED_FAILURE_REASON_CODES.has(candidateReasonCode)
     ? candidateReasonCode
     : null;
-  const latencyMs = count(value.latency_ms);
-  const parity = safeText(value.parity, 64);
+  const parity = projectedReasoningVariance ? 'match_visible_only' : rawParity;
   const failureKind = normalizeFailureKind({
-    success: value.success,
+    success,
     rawFailureKind,
     failureReasonCode,
     httpStatus,
@@ -133,7 +166,7 @@ export function parseEndpointTelemetryLine(line) {
   return {
     endpoint: value.endpoint,
     mode: value.mode,
-    success: value.success,
+    success,
     observedAt,
     httpStatus,
     latencyMs,
@@ -141,8 +174,9 @@ export function parseEndpointTelemetryLine(line) {
     promptTokens: count(value.prompt_tokens),
     outputTokens: count(value.output_tokens),
     totalTokens: count(value.total_tokens),
-    schemaOk: typeof value.schema_ok === 'boolean' ? value.schema_ok : null,
+    schemaOk,
     parity,
+    reasoningVariance: value.reasoning_variance === true || projectedReasoningVariance,
     failureKind,
     failureReasonCode,
     failureConfidence,
@@ -250,8 +284,14 @@ function routeOrder(route) {
 }
 
 export class EndpointTelemetryAccumulator {
-  constructor() {
-    this.routes = new Map();
+  constructor({ clock = Date.now, windowMs = ENDPOINT_WINDOW_MS } = {}) {
+    if (typeof clock !== 'function') throw new TypeError('clock must be a function');
+    if (!Number.isSafeInteger(windowMs) || windowMs <= 0) {
+      throw new TypeError('windowMs must be a positive safe integer');
+    }
+    this.clock = clock;
+    this.windowMs = windowMs;
+    this.events = [];
     this.eventsSeen = 0;
     this.invalidLines = 0;
   }
@@ -264,14 +304,25 @@ export class EndpointTelemetryAccumulator {
       return;
     }
     this.eventsSeen += 1;
-    const key = `${event.endpoint}\u0000${event.mode}`;
-    const route = this.routes.get(key) ?? blankRoute(event);
-    applyEvent(route, event);
-    this.routes.set(key, route);
+    this.events.push(event);
   }
 
   snapshot() {
-    const routes = [...this.routes.values()].map(publicRoute)
+    const windowEndAt = this.clock();
+    if (timestamp(windowEndAt) === null) throw new TypeError('clock returned an invalid timestamp');
+    const windowStartAt = windowEndAt - this.windowMs;
+    this.events = this.events.filter((event) => event.observedAt >= windowStartAt);
+    const windowEvents = this.events
+      .filter((event) => event.observedAt <= windowEndAt)
+      .sort((left, right) => left.observedAt - right.observedAt);
+    const routesByKey = new Map();
+    for (const event of windowEvents) {
+      const key = `${event.endpoint}\u0000${event.mode}`;
+      const route = routesByKey.get(key) ?? blankRoute(event);
+      applyEvent(route, event);
+      routesByKey.set(key, route);
+    }
+    const routes = [...routesByKey.values()].map(publicRoute)
       .sort((left, right) => routeOrder(left) - routeOrder(right));
     const checks = routes.reduce((sum, route) => sum + route.checks, 0);
     const successes = routes.reduce((sum, route) => sum + route.successes, 0);
@@ -295,6 +346,9 @@ export class EndpointTelemetryAccumulator {
         ), null),
       },
       routes,
+      windowMs: this.windowMs,
+      windowStartAt,
+      windowEndAt,
       eventsSeen: this.eventsSeen,
       invalidLines: this.invalidLines,
     };
@@ -302,12 +356,13 @@ export class EndpointTelemetryAccumulator {
 }
 
 export class EndpointTelemetryFile {
-  constructor(filePath) {
+  constructor(filePath, accumulatorOptions = {}) {
     this.filePath = filePath;
+    this.accumulatorOptions = { ...accumulatorOptions };
     this.offset = 0;
     this.inode = null;
     this.partial = '';
-    this.accumulator = new EndpointTelemetryAccumulator();
+    this.accumulator = new EndpointTelemetryAccumulator(this.accumulatorOptions);
     this.readPromise = null;
   }
 
@@ -332,7 +387,7 @@ export class EndpointTelemetryFile {
     if (this.inode !== null && (metadata.ino !== this.inode || metadata.size < this.offset)) {
       this.offset = 0;
       this.partial = '';
-      this.accumulator = new EndpointTelemetryAccumulator();
+      this.accumulator = new EndpointTelemetryAccumulator(this.accumulatorOptions);
     }
     this.inode = metadata.ino;
     if (metadata.size === this.offset) return;

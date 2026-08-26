@@ -9,6 +9,7 @@ import { createDashboardServer, DEFAULT_DASHBOARD_PORT } from '../server.js';
 const HEADER = 'id\tdisplay_name\tusername\tapi_port\tprofile_dir\tprompt_id\tenabled';
 
 test('serves a read-only snapshot with no private profile path', async (context) => {
+  const now = Date.now();
   assert.equal(DEFAULT_DASHBOARD_PORT, 9120);
   const root = await mkdtemp(path.join(os.tmpdir(), 'hermescraft-dashboard-'));
   await mkdir(path.join(root, 'config'), { recursive: true });
@@ -51,7 +52,7 @@ test('serves a read-only snapshot with no private profile path', async (context)
     `${JSON.stringify({
       schema_version: 1,
       event: 'endpoint_check',
-      observed_at_ms: 3_000,
+      observed_at_ms: now,
       endpoint: '/v1/responses',
       mode: 'nonstream',
       success: true,

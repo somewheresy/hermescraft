@@ -16,8 +16,11 @@ not from Minecraft or the profile's private session data.
 Eddie's endpoint canary appends content-free results to
 `runtime/telemetry/endpoint_checks.jsonl`. The dashboard reports per-route and
 streaming-mode successes, failures, latency, schema status, token use, and
-freshness. Failures are grouped into saturation, timeout, HTTP, schema, output,
-parity, and uncategorized request failures. Saturation is reported only when the
+freshness for a rolling 24-hour window. Existing HTTP-200, schema-valid records
+whose visible smoke output matched but hidden reasoning varied are projected as
+successful visible parity without rewriting the append-only telemetry source.
+Failures are grouped into saturation, timeout, HTTP, schema, output, parity, and
+uncategorized request failures. Saturation is reported only when the
 canary receives an allowlisted structured queue or capacity reason from the
 inference response; a client-side timeout remains a timeout. The canary runs
 every 15 minutes and on demand, exercises only the

@@ -176,12 +176,12 @@ function renderEndpointHealth(health) {
   const allHealthy = routes.length > 0 && routes.every((route) => route.lastSuccess);
   indicator.className = `live-indicator ${allHealthy ? 'live' : routes.length ? 'stale' : ''}`;
   byId('endpoint-counts').textContent = routes.length
-    ? `${number.format(metrics.healthyRoutes ?? 0)} / ${number.format(metrics.routeCount ?? 0)} passing · ${number.format(metrics.successes ?? 0)} successes · ${number.format(metrics.failures ?? 0)} failures · ${number.format(metrics.totalTokens ?? 0)} tokens`
-    : 'No endpoint sweep recorded yet';
+    ? `Past 24h · ${number.format(metrics.healthyRoutes ?? 0)} / ${number.format(metrics.routeCount ?? 0)} passing · ${number.format(metrics.successes ?? 0)} successes · ${number.format(metrics.failures ?? 0)} failures · ${number.format(metrics.totalTokens ?? 0)} tokens`
+    : 'No endpoint sweep recorded in the past 24 hours';
   const failures = failureBreakdown(metrics.failureCounts);
   byId('endpoint-failure-breakdown').textContent = failures
-    ? `Failure causes · ${failures}`
-    : 'No failures recorded';
+    ? `Failure causes (24h) · ${failures}`
+    : 'No failures in the past 24 hours';
   byId('endpoint-freshness').textContent = metrics.lastCheckedAt
     ? `Last sweep ${relativeTime(metrics.lastCheckedAt)}`
     : 'Scheduled every 15 minutes';
@@ -222,7 +222,7 @@ function renderEndpointHealth(health) {
   });
   if (rows.length === 0) {
     const row = document.createElement('tr');
-    const empty = cell('Endpoint telemetry begins with the first scheduled or on-demand sweep.');
+    const empty = cell('No scheduled or on-demand endpoint sweep was recorded in the past 24 hours.');
     empty.colSpan = 11;
     row.append(empty);
     rows.push(row);

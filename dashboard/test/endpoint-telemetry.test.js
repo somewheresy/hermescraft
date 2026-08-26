@@ -5,10 +5,17 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  ENDPOINT_WINDOW_MS,
   EndpointTelemetryAccumulator,
   EndpointTelemetryFile,
   parseEndpointTelemetryLine,
 } from '../lib/endpoint-telemetry.js';
+
+const TEST_NOW = 10_000;
+
+function accumulator() {
+  return new EndpointTelemetryAccumulator({ clock: () => TEST_NOW });
+}
 
 function event(overrides = {}) {
   return {
@@ -59,9 +66,9 @@ test('accepts only content-free allowlisted inference checks', () => {
 });
 
 test('aggregates successes, failures, recovery, latency, and token use by route', () => {
-  const accumulator = new EndpointTelemetryAccumulator();
-  accumulator.addLine(JSON.stringify(event()));
-  accumulator.addLine(JSON.stringify(event({
+  const telemetry = accumulator();
+  telemetry.addLine(JSON.stringify(event()));
+  telemetry.addLine(JSON.stringify(event({
     observed_at_ms: 2_000,
     mode: 'stream',
     success: false,
@@ -71,13 +78,13 @@ test('aggregates successes, failures, recovery, latency, and token use by route'
     parity: 'fail',
     failure_kind: 'http_error',
   })));
-  accumulator.addLine(JSON.stringify(event({
+  telemetry.addLine(JSON.stringify(event({
     observed_at_ms: 3_000,
     mode: 'stream',
     latency_ms: 300,
   })));
 
-  const snapshot = accumulator.snapshot();
+  const snapshot = telemetry.snapshot();
   assert.deepEqual(snapshot.overall, {
     checks: 3,
     successes: 2,
@@ -107,7 +114,7 @@ test('aggregates successes, failures, recovery, latency, and token use by route'
 });
 
 test('classifies direct saturation and keeps timeout, schema, output, and parity distinct', () => {
-  const accumulator = new EndpointTelemetryAccumulator();
+  const telemetry = accumulator();
   const failures = [
     event({
       observed_at_ms: 1_000,
@@ -149,9 +156,9 @@ test('classifies direct saturation and keeps timeout, schema, output, and parity
       failure_kind: 'request_failed',
     }),
   ];
-  for (const failure of failures) accumulator.addLine(JSON.stringify(failure));
+  for (const failure of failures) telemetry.addLine(JSON.stringify(failure));
 
-  const snapshot = accumulator.snapshot();
+  const snapshot = telemetry.snapshot();
   assert.deepEqual(snapshot.overall.failureCounts, {
     saturation: 1,
     timeout: 1,
@@ -223,6 +230,57 @@ test('projects timeout-shaped legacy parity failures without rewriting real mism
   assert.equal(legacyUnknown.failureKind, 'request_failed');
 });
 
+test('projects reasoning-only parity false positives as successful visible parity', () => {
+  const parsed = parseEndpointTelemetryLine(JSON.stringify(event({
+    endpoint: '/v1/chat/completions',
+    success: false,
+    http_status: 200,
+    schema_ok: true,
+    smoke_expectation: 'match',
+    parity: 'mismatch',
+    failure_kind: 'parity_mismatch',
+    failure_reason_code: null,
+  })));
+
+  assert.equal(parsed.success, true);
+  assert.equal(parsed.failureKind, null);
+  assert.equal(parsed.parity, 'match_visible_only');
+  assert.equal(parsed.reasoningVariance, true);
+});
+
+test('limits endpoint rates, failure totals, and route state to the trailing 24 hours', () => {
+  const now = 2 * ENDPOINT_WINDOW_MS;
+  const telemetry = new EndpointTelemetryAccumulator({ clock: () => now });
+  telemetry.addLine(JSON.stringify(event({
+    observed_at_ms: now - ENDPOINT_WINDOW_MS - 1,
+    success: false,
+    failure_kind: 'http_error',
+    http_status: 502,
+  })));
+  telemetry.addLine(JSON.stringify(event({
+    observed_at_ms: now - ENDPOINT_WINDOW_MS,
+  })));
+  telemetry.addLine(JSON.stringify(event({
+    observed_at_ms: now - 1,
+    success: false,
+    failure_kind: 'timeout',
+    failure_reason_code: 'client_timeout',
+    http_status: null,
+  })));
+
+  const snapshot = telemetry.snapshot();
+
+  assert.equal(snapshot.windowMs, ENDPOINT_WINDOW_MS);
+  assert.equal(snapshot.windowStartAt, now - ENDPOINT_WINDOW_MS);
+  assert.equal(snapshot.windowEndAt, now);
+  assert.equal(snapshot.overall.checks, 2);
+  assert.equal(snapshot.overall.successes, 1);
+  assert.equal(snapshot.overall.failures, 1);
+  assert.equal(snapshot.overall.failureCounts.http_error, 0);
+  assert.equal(snapshot.overall.failureCounts.timeout, 1);
+  assert.equal(snapshot.routes[0].lastSuccess, false);
+});
+
 test('unknown failure kinds stay visible as request failures', () => {
   const parsed = parseEndpointTelemetryLine(JSON.stringify(event({
     success: false,
@@ -236,7 +294,7 @@ test('tails appended endpoint telemetry and resets after truncation', async () =
   const root = await mkdtemp(path.join(os.tmpdir(), 'hermescraft-endpoints-'));
   const file = path.join(root, 'events.jsonl');
   await writeFile(file, `${JSON.stringify(event())}\n`);
-  const telemetry = new EndpointTelemetryFile(file);
+  const telemetry = new EndpointTelemetryFile(file, { clock: () => TEST_NOW });
   assert.equal((await telemetry.refresh()).overall.checks, 1);
 
   await appendFile(file, `${JSON.stringify(event({ observed_at_ms: 2_000 }))}\n`);
@@ -246,4 +304,20 @@ test('tails appended endpoint telemetry and resets after truncation', async () =
   const snapshot = await telemetry.refresh();
   assert.equal(snapshot.overall.checks, 1);
   assert.equal(snapshot.routes[0].mode, 'stream');
+});
+
+test('expires the rolling window even when the telemetry file has no new bytes', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'hermescraft-endpoint-window-'));
+  const file = path.join(root, 'events.jsonl');
+  let now = ENDPOINT_WINDOW_MS;
+  await writeFile(file, `${JSON.stringify(event({ observed_at_ms: now }))}\n`);
+  const telemetry = new EndpointTelemetryFile(file, { clock: () => now });
+
+  assert.equal((await telemetry.refresh()).overall.checks, 1);
+  now += ENDPOINT_WINDOW_MS + 1;
+  const expired = await telemetry.refresh();
+
+  assert.equal(expired.overall.checks, 0);
+  assert.equal(expired.overall.routeCount, 0);
+  assert.deepEqual(expired.routes, []);
 });
