@@ -49,13 +49,17 @@ function utilizationPercent(value) {
 }
 
 function sparkStatus(value) {
-  return ['ok', 'stale', 'unavailable'].includes(value) ? value : 'unavailable';
+  return ['serving', 'idle', 'daemon-down', 'stale', 'unavailable'].includes(value)
+    ? value
+    : 'unavailable';
 }
 
 function sparkStatusLabel(status) {
-  if (status === 'ok') return 'Live';
+  if (status === 'serving') return 'Serving';
+  if (status === 'idle') return 'Idle';
+  if (status === 'daemon-down') return 'Daemon down';
   if (status === 'stale') return 'Stale';
-  return 'Unavailable';
+  return 'Unreachable';
 }
 
 function sparkDetail(label, value) {
@@ -73,6 +77,7 @@ function renderSpark(spark) {
   const status = sparkStatus(spark?.status);
   const memory = spark?.memory ?? {};
   const swap = spark?.swap ?? {};
+  const runtime = spark?.runtime ?? {};
   const percent = utilizationPercent(memory.utilizationPercent);
   const hasMemory = percent !== null
     && Number.isFinite(memory.usedBytes)
@@ -88,7 +93,9 @@ function renderSpark(spark) {
   const name = document.createElement('h3');
   name.textContent = spark?.displayName || spark?.id || 'Spark';
   const description = document.createElement('span');
-  description.textContent = 'GB10 unified memory';
+  description.textContent = runtime.daemonRunning
+    ? runtime.activeModel ? `Serving ${runtime.activeModel}` : 'Actual daemon running · no model loaded'
+    : status === 'daemon-down' ? 'Host reachable · Actual daemon stopped' : 'GB10 unified memory';
   identity.append(name, description);
 
   const statusElement = document.createElement('span');
@@ -127,6 +134,7 @@ function renderSpark(spark) {
   details.append(
     sparkDetail('Available', gibibytes(memory.availableBytes)),
     sparkDetail('Swap', swapValue),
+    sparkDetail('Cluster', runtime.clusterMembership ?? '—'),
   );
 
   const freshness = document.createElement('p');
@@ -134,7 +142,7 @@ function renderSpark(spark) {
   const sampled = relativeTime(spark?.sampledAt);
   freshness.textContent = sampled === '—'
     ? 'No successful sample yet'
-    : `${status === 'ok' ? 'Sampled' : 'Last sample'} ${sampled}`;
+    : `${['serving', 'idle', 'daemon-down'].includes(status) ? 'Sampled' : 'Last sample'} ${sampled}`;
 
   card.append(header, usage, meter, details, freshness);
   return card;

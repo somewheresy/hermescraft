@@ -12,12 +12,12 @@ export const DEFAULT_SPARKS = Object.freeze([
   Object.freeze({
     id: 'spark2',
     displayName: 'Spark 2',
-    target: 'somewheresystems@10.0.0.18',
+    target: 'somewheresystems@10.0.0.30',
     hostKeyAlias: 'spark-20d2.local',
   }),
 ]);
 
-export const REMOTE_MEMORY_COMMAND = "awk '/^MemTotal:/ { mt = $2 } /^MemAvailable:/ { ma = $2 } /^SwapTotal:/ { st = $2 } /^SwapFree:/ { sf = $2 } END { if (mt == \"\" || ma == \"\" || st == \"\" || sf == \"\") exit 1; print mt, ma, st, sf }' /proc/meminfo";
+export const REMOTE_SPARK_COMMAND = "awk '/^MemTotal:/ { mt = $2 } /^MemAvailable:/ { ma = $2 } /^SwapTotal:/ { st = $2 } /^SwapFree:/ { sf = $2 } END { if (mt == \"\" || ma == \"\" || st == \"\" || sf == \"\") exit 1; print mt, ma, st, sf }' /proc/meminfo; \"$HOME/.actual/bin/actual\" status --format json";
 
 function kibibytesToBytes(value) {
   const bytes = value * 1024;
@@ -63,6 +63,57 @@ export function parseMemorySample(stdout) {
   };
 }
 
+function safeStatusValue(value) {
+  return typeof value === 'string' && /^[a-z][a-z0-9_-]{0,39}$/.test(value)
+    ? value
+    : null;
+}
+
+function activeModelName(active) {
+  if (typeof active === 'string') return active.replace(/[^a-zA-Z0-9._@:+\/-]/g, '').slice(0, 120) || null;
+  if (!active || typeof active !== 'object') return null;
+  for (const key of ['canonical_name', 'display_name', 'model_id', 'id']) {
+    if (typeof active[key] !== 'string') continue;
+    const value = active[key].replace(/[^a-zA-Z0-9._@:+\/-]/g, '').slice(0, 120);
+    if (value) return value;
+  }
+  return null;
+}
+
+export function parseSparkSample(stdout) {
+  if (typeof stdout !== 'string') throw new Error('Spark sample must be text');
+  const newline = stdout.indexOf('\n');
+  if (newline < 0) throw new Error('Spark sample is missing runtime status');
+  const memory = parseMemorySample(stdout.slice(0, newline));
+  let status;
+  try {
+    status = JSON.parse(stdout.slice(newline + 1));
+  } catch {
+    throw new Error('Spark returned invalid runtime status');
+  }
+  if (!status || typeof status !== 'object' || !status.daemon || !status.api) {
+    throw new Error('Spark runtime status is incomplete');
+  }
+  const daemonRunning = status.daemon.state === 'running'
+    && Number.isSafeInteger(status.daemon.pid)
+    && status.daemon.pid > 1;
+  const activeModel = activeModelName(status.model?.active);
+  return {
+    ...memory,
+    runtime: {
+      daemonRunning,
+      inferenceReadiness: safeStatusValue(status.api?.inference?.inference_readiness),
+      activeModel,
+      clusterMembership: safeStatusValue(status.cluster?.state?.membership_status),
+    },
+  };
+}
+
+function liveStatus(sample) {
+  if (!sample.runtime.daemonRunning) return 'daemon-down';
+  return sample.runtime.activeModel ? 'serving' : 'idle';
+}
+
 export function buildSshArguments(spark, identityFile) {
   const args = [
     '-T',
@@ -74,7 +125,7 @@ export function buildSshArguments(spark, identityFile) {
     '-o', 'StrictHostKeyChecking=yes',
   ];
   if (spark.hostKeyAlias) args.push('-o', `HostKeyAlias=${spark.hostKeyAlias}`);
-  args.push(spark.target, REMOTE_MEMORY_COMMAND);
+  args.push(spark.target, REMOTE_SPARK_COMMAND);
   return args;
 }
 
@@ -86,7 +137,7 @@ export function probeSparkMemory(spark, {
   return new Promise((resolve, reject) => {
     execFile('ssh', buildSshArguments(spark, identityFile), {
       timeout: timeoutMs,
-      maxBuffer: 4 * 1024,
+      maxBuffer: 32 * 1024,
       windowsHide: true,
     }, (error, stdout = '') => {
       if (error) {
@@ -94,7 +145,7 @@ export function probeSparkMemory(spark, {
         return;
       }
       try {
-        resolve(parseMemorySample(stdout));
+        resolve(parseSparkSample(stdout));
       } catch {
         reject(new Error('Spark returned an invalid memory sample'));
       }
@@ -114,15 +165,17 @@ function projectState(spark, state, now, staleMs) {
       status: 'unavailable',
       memory: null,
       swap: null,
+      runtime: null,
       sampledAt: state.sampledAt,
     };
   }
   return {
     id: spark.id,
     displayName: spark.displayName,
-    status: state.lastAttemptSucceeded ? 'ok' : 'stale',
+    status: state.lastAttemptSucceeded ? liveStatus(state.sample) : 'stale',
     memory: state.sample.memory,
     swap: state.sample.swap,
+    runtime: state.sample.runtime,
     sampledAt: state.sampledAt,
   };
 }

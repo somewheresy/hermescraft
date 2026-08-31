@@ -193,6 +193,8 @@ h2 {
 }
 
 .spark-card-stale { border-color: #685b30; }
+.spark-card-idle { border-color: #685b30; }
+.spark-card-daemon-down { border-color: #673934; }
 .spark-card-unavailable { border-color: #673934; }
 
 .spark-card-header,
@@ -229,7 +231,9 @@ h2 {
   text-transform: uppercase;
 }
 
-.spark-status-ok { color: var(--green); border-color: #376343; background: var(--green-deep); }
+.spark-status-serving { color: var(--green); border-color: #376343; background: var(--green-deep); }
+.spark-status-idle { color: var(--yellow); border-color: #685b30; background: #312b19; }
+.spark-status-daemon-down { color: var(--red); border-color: #673934; background: #2e1c1a; }
 .spark-status-stale { color: var(--yellow); border-color: #685b30; background: #312b19; }
 .spark-status-unavailable { color: var(--red); border-color: #673934; background: #2e1c1a; }
 

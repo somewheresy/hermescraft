@@ -81,7 +81,9 @@ test('serves a read-only snapshot with no private profile path', async (context)
     }),
     minecraftProbe: async (port) => ({ reachable: true, port }),
     sessionLister: async () => new Set(['mc-server']),
-    socialAgentInspector: async () => ({ running: true, pid: 74789, privateDetail: 'hidden' }),
+    socialAgentInspector: async () => ({
+      state: 'online', running: true, phase: null, pid: 74789, privateDetail: 'hidden',
+    }),
     workerStateLoader: async () => ({
       brain: {
         state: 'waiting', childRunning: false, restartCount: 0,
@@ -96,7 +98,7 @@ test('serves a read-only snapshot with no private profile path', async (context)
       snapshot: async () => [{
         id: 'spark1',
         displayName: 'Spark 1',
-        status: 'ok',
+        status: 'serving',
         memory: {
           totalBytes: 102_400,
           usedBytes: 76_800,
@@ -104,6 +106,12 @@ test('serves a read-only snapshot with no private profile path', async (context)
           utilizationPercent: 75,
         },
         swap: { totalBytes: 10_240, usedBytes: 6_144 },
+        runtime: {
+          daemonRunning: true,
+          inferenceReadiness: 'ready',
+          activeModel: 'qwen3.8-27b-Q4_K_M',
+          clusterMembership: 'connected',
+        },
         sampledAt: 1_000,
         target: 'private-hostname',
         identityFile: 'private-key-path',
@@ -111,7 +119,7 @@ test('serves a read-only snapshot with no private profile path', async (context)
       }, {
         id: 'spark2',
         displayName: 'Spark 2',
-        status: 'ok',
+        status: 'idle',
         memory: {
           totalBytes: 100,
           usedBytes: 75,
@@ -183,7 +191,7 @@ test('serves a read-only snapshot with no private profile path', async (context)
   assert.deepEqual(snapshot.sparks, [{
     id: 'spark1',
     displayName: 'Spark 1',
-    status: 'ok',
+    status: 'serving',
     memory: {
       totalBytes: 102_400,
       usedBytes: 76_800,
@@ -191,6 +199,12 @@ test('serves a read-only snapshot with no private profile path', async (context)
       utilizationPercent: 75,
     },
     swap: { totalBytes: 10_240, usedBytes: 6_144 },
+    runtime: {
+      daemonRunning: true,
+      inferenceReadiness: 'ready',
+      activeModel: 'qwen3.8-27b-Q4_K_M',
+      clusterMembership: 'connected',
+    },
     sampledAt: 1_000,
   }, {
     id: 'spark2',
@@ -198,6 +212,7 @@ test('serves a read-only snapshot with no private profile path', async (context)
     status: 'unavailable',
     memory: null,
     swap: null,
+    runtime: null,
     sampledAt: 1_000,
   }]);
   assert.equal(snapshot.agents[0].profileDir, undefined);

@@ -62,10 +62,13 @@ function publicAgent(agent) {
 
 function publicSocialAgent(state, metrics) {
   const running = state?.running === true;
+  const health = ['online', 'degraded', 'offline'].includes(state?.state)
+    ? state.state
+    : 'offline';
   return {
     ...SOCIAL_AGENT,
     workload: 'social',
-    state: running ? 'online' : 'offline',
+    state: health,
     daemonRunning: running,
     brainRunning: false,
     bodyRunning: false,
@@ -73,7 +76,11 @@ function publicSocialAgent(state, metrics) {
     minecraftConnected: false,
     identityMatches: null,
     game: null,
-    task: null,
+    task: typeof state?.phase === 'string' ? {
+      action: state.phase,
+      status: health,
+      elapsedSeconds: null,
+    } : null,
     workers: { brain: null, body: null },
     metrics: metrics ?? null,
   };
@@ -117,7 +124,7 @@ function publicWorkers(workers, state) {
 }
 
 function publicSparkMemory(spark) {
-  const allowedStates = new Set(['ok', 'stale', 'unavailable']);
+  const allowedStates = new Set(['serving', 'idle', 'daemon-down', 'stale', 'unavailable']);
   const status = allowedStates.has(spark?.status) ? spark.status : 'unavailable';
   const id = typeof spark?.id === 'string' && /^[a-z0-9_-]{1,32}$/.test(spark.id)
     ? spark.id
@@ -131,6 +138,7 @@ function publicSparkMemory(spark) {
     : null;
   const memory = spark.memory && typeof spark.memory === 'object' ? spark.memory : null;
   const swap = spark.swap && typeof spark.swap === 'object' ? spark.swap : null;
+  const runtime = spark.runtime && typeof spark.runtime === 'object' ? spark.runtime : null;
   const totalBytes = safeByteCount(memory?.totalBytes);
   const usedBytes = safeByteCount(memory?.usedBytes);
   const availableBytes = safeByteCount(memory?.availableBytes);
@@ -156,6 +164,18 @@ function publicSparkMemory(spark) {
     swap: validMemory && validSwap ? {
       totalBytes: swapTotalBytes,
       usedBytes: swapUsedBytes,
+    } : null,
+    runtime: validMemory && validSwap && runtime ? {
+      daemonRunning: runtime.daemonRunning === true,
+      inferenceReadiness: typeof runtime.inferenceReadiness === 'string'
+        ? runtime.inferenceReadiness.slice(0, 40)
+        : null,
+      activeModel: typeof runtime.activeModel === 'string'
+        ? runtime.activeModel.slice(0, 120)
+        : null,
+      clusterMembership: typeof runtime.clusterMembership === 'string'
+        ? runtime.clusterMembership.slice(0, 40)
+        : null,
     } : null,
     sampledAt,
   };

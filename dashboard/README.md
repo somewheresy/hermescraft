@@ -10,8 +10,9 @@ runtime dependencies and reads two local sources:
 
 The Eddie Social profile emits under the distinct `eddie-social` identifier.
 Its token usage is included in the overall counters and shown as
-`Eddie Platinum — Social`; its lifecycle state comes from the daemon PID file,
-not from Minecraft or the profile's private session data.
+`Eddie Platinum — Social`; its lifecycle state requires both the system launchd
+job and a fresh, PID-matching content-free daemon heartbeat. It does not depend
+on Minecraft, a temporary PID file, or the profile's private session data.
 
 Eddie's endpoint canary appends content-free results to
 `runtime/telemetry/endpoint_checks.jsonl`. The dashboard reports per-route and
@@ -40,14 +41,16 @@ A transition timestamp is marked stale only when its tmux supervisor is also
 absent; running workers are not expected to rewrite it as a heartbeat.
 Browser clients never connect directly to body APIs.
 
-The Spark memory cards sample `MemTotal`, `MemAvailable`, `SwapTotal`, and
-`SwapFree` from each S2 Spark's `/proc/meminfo` over fixed, batch-mode SSH
-commands. Samples are cached for 10 seconds. A failed refresh keeps the last
-good values marked stale for up to 60 seconds, after which the values become
-unavailable. On GB10, this host-memory view is labeled unified memory because
-CPU and GPU allocations share the same pool. The browser receives only the
-Spark name, numeric memory values, status, and sample timestamp; SSH targets,
-key paths, commands, and errors remain server-side.
+The Spark cards sample `MemTotal`, `MemAvailable`, `SwapTotal`, and `SwapFree`
+alongside `actual status --format json` over fixed, batch-mode SSH commands.
+They distinguish an unreachable host, a reachable host with a stopped daemon,
+an idle daemon with no active model, and a serving daemon. Samples are cached
+for 10 seconds. A failed refresh keeps the last good values marked stale for up
+to 60 seconds, after which the values become unavailable. On GB10, this
+host-memory view is labeled unified memory because CPU and GPU allocations
+share the same pool. The browser receives only the Spark name, numeric memory
+values, sanitized runtime state, and sample timestamp; SSH targets, key paths,
+commands, raw status payloads, and errors remain server-side.
 
 ```bash
 cd dashboard
