@@ -1,0 +1,27 @@
+[Unit]
+Description=Actual S2 static Spark cluster daemon
+Documentation=https://actual.inc
+StartLimitIntervalSec=30min
+StartLimitBurst=20
+ConditionFileIsExecutable=/home/somewheresystems/.actual/bin/actual-daemon
+ConditionPathExists=/home/somewheresystems/.actual/spark-cluster.toml
+
+[Service]
+Type=simple
+WorkingDirectory=/home/somewheresystems
+Environment=HOME=/home/somewheresystems
+Environment=PATH=/home/somewheresystems/.actual/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=RUST_BACKTRACE=1
+ExecStart=/home/somewheresystems/.actual/bin/run-actual-spark-cluster
+Restart=always
+RestartSec=15s
+OOMPolicy=stop
+MemoryAccounting=yes
+TimeoutStopSec=90s
+KillMode=mixed
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=actual-spark-cluster
+
+[Install]
+WantedBy=default.target

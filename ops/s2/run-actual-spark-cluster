@@ -1,0 +1,59 @@
+#!/bin/sh
+set -eu
+
+actual_dir="${ACTUAL_SPARK_DIR:-$HOME/.actual}"
+log_dir="$actual_dir/logs"
+mkdir -p "$log_dir"
+
+export ACTUAL_INFERENCE_MAX_ACTIVE_REQUESTS="${ACTUAL_INFERENCE_MAX_ACTIVE_REQUESTS:-4}"
+
+fabric_preload="$actual_dir/lib/libactual-ipv4-fabric.so"
+if [ -r "$fabric_preload" ]; then
+    if [ -n "${LD_PRELOAD:-}" ]; then
+        export LD_PRELOAD="$fabric_preload:$LD_PRELOAD"
+    else
+        export LD_PRELOAD="$fabric_preload"
+    fi
+fi
+
+if [ -x "$actual_dir/bin/assign-spark-peers" ]; then
+    (
+        sleep 2
+        "$actual_dir/bin/assign-spark-peers"
+    ) >> "$log_dir/spark-cluster-assignment.out" 2>&1 &
+fi
+
+set -- "$actual_dir/bin/actual-daemon" \
+    --log-level info \
+    --log-file "$log_dir/spark-cluster-200g.jsonl" \
+    --log-format json \
+    --headless \
+    --port 8080 \
+    --cluster-port 8081 \
+    --rpc-port 50052 \
+    --static-cluster-config "$actual_dir/spark-cluster.toml"
+
+if ip -4 -o addr show | grep -q '10\.44\.0\.11/'; then
+    model="${ACTUAL_SPARK_MODEL:-qwen3.8-27b-Q4_K_M}"
+    set -- "$@" --model "$model"
+    (
+        attempt=0
+        requested=false
+        while [ "$attempt" -lt 60 ]; do
+            status=$(timeout 5 "$actual_dir/bin/actual" status --format json 2>/dev/null || true)
+            if [ -n "$status" ] && ! printf '%s' "$status" | grep -q '"active":null'; then
+                exit 0
+            fi
+            if [ "$requested" = false ] && printf '%s' "$status" | grep -q '"membership_status":"joined"'; then
+                "$actual_dir/bin/actual" models load "$model" --no-wait --format json
+                requested=true
+            fi
+            attempt=$((attempt + 1))
+            sleep 5
+        done
+        printf 'model did not become active after supervised startup: %s\n' "$model" >&2
+        exit 1
+    ) >> "$log_dir/spark-cluster-model-load.out" 2>&1 &
+fi
+
+exec "$@"
